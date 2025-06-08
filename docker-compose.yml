@@ -1,34 +1,129 @@
 version: '3.8'
 
 services:
+  # --- N8N Core Services ---
   n8n:
-    image: n8nio/n8n
+    image: n8nio/n8n:latest
+    container_name: n8n_core_app
     ports:
       - "5678:5678"
     volumes:
-      - ~/.n8n:/home/node/.n8n
+      - n8n_data:/home/node/.n8n
     environment:
       - N8N_HOST=${N8N_HOST:-localhost}
       - N8N_PORT=${N8N_PORT:-5678}
       - N8N_PROTOCOL=${N8N_PROTOCOL:-http}
       - NODE_ENV=production
-      - N8N_DB=mongodb # Informa o n8n para usar o MongoDB
-      - N8N_DB_MONGODB_URL=mongodb://n8n-mongo:27017/n8n # URL de conexão do MongoDB
-      - REDIS_HOST=n8n-redis # Host do Redis para o n8n
+      - N8N_DB=mongodb
+      - N8N_DB_MONGODB_URL=mongodb://n8n_mongo_db:27017/n8n
+      - REDIS_HOST=n8n_redis_cache
+      - N8N_LOG_LEVEL=info
+      - N8N_LOG_OUTPUT=stdout
     restart: unless-stopped
+    networks:
+      - assistant_network
+    logging: # Configura o driver de log do Docker para GELF
+      driver: gelf
+      options:
+        # Aponta para o localhost do host, pois a porta 12201 do Logstash está exposta no host
+        gelf-address: "udp://localhost:12201"
+        tag: "n8n"
+    depends_on:
+      - logstash_gelf
 
-  n8n-mongo:
+  n8n_mongo_db:
     image: mongo:latest
+    container_name: n8n_mongo_db_data
     restart: unless-stopped
     volumes:
-      - n8n_mongo_data:/data/db # Volume para persistir os dados do MongoDB
+      - n8n_mongo_data:/data/db
+    networks:
+      - assistant_network
+    logging:
+      driver: gelf
+      options:
+        gelf-address: "udp://localhost:12201"
+        tag: "n8n-mongo"
+    depends_on:
+      - logstash_gelf
 
-  n8n-redis:
+  n8n_redis_cache:
     image: redis:latest
+    container_name: n8n_redis_cache_data
     restart: unless-stopped
     volumes:
-      - n8n_redis_data:/data # Volume para persistir os dados do Redis
+      - n8n_redis_data:/data
+    networks:
+      - assistant_network
+    logging:
+      driver: gelf
+      options:
+        gelf-address: "udp://localhost:12201"
+        tag: "n8n-redis"
+    depends_on:
+      - logstash_gelf
+
+  # --- ELK Stack Services for Logging ---
+  elasticsearch_log:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+    container_name: elasticsearch_log_data
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    restart: unless-stopped
+    networks:
+      - assistant_network
+
+  logstash_gelf:
+    image: docker.elastic.co/logstash/logstash:8.13.4
+    container_name: logstash_gelf_processor
+    command: logstash -f /usr/share/logstash/config/logstash.conf
+    volumes:
+      - ./logstash/config:/usr/share/logstash/config
+    ports:
+      - "12201:12201/udp" # Garante que a porta 12201 UDP do Logstash esteja exposta no HOST
+    environment:
+      - LS_JAVA_OPTS=-Xms256m -Xmx256m
+    depends_on:
+      - elasticsearch_log
+    restart: unless-stopped
+    networks:
+      - assistant_network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  kibana_viewer:
+    image: docker.elastic.co/kibana/kibana:8.13.4
+    container_name: kibana_log_viewer
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch_log:9200
+      - XPACK_SECURITY_ENABLED=false
+    depends_on:
+      - elasticsearch_log
+    restart: unless-stopped
+    networks:
+      - assistant_network
 
 volumes:
+  n8n_data:
   n8n_mongo_data:
   n8n_redis_data:
+  elasticsearch_data:
+
+networks:
+  assistant_network:
+    name: personal_ai_assistant_network
