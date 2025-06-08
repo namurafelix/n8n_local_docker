@@ -1,7 +1,6 @@
 version: '3.8'
 
 services:
-  # --- N8N Core Services ---
   n8n:
     image: n8nio/n8n:latest
     container_name: n8n_core_app
@@ -22,14 +21,6 @@ services:
     restart: unless-stopped
     networks:
       - assistant_network
-    logging: # Configura o driver de log do Docker para GELF
-      driver: gelf
-      options:
-        # Aponta para o localhost do host, pois a porta 12201 do Logstash está exposta no host
-        gelf-address: "udp://localhost:12201"
-        tag: "n8n"
-    depends_on:
-      - logstash_gelf
 
   n8n_mongo_db:
     image: mongo:latest
@@ -39,13 +30,6 @@ services:
       - n8n_mongo_data:/data/db
     networks:
       - assistant_network
-    logging:
-      driver: gelf
-      options:
-        gelf-address: "udp://localhost:12201"
-        tag: "n8n-mongo"
-    depends_on:
-      - logstash_gelf
 
   n8n_redis_cache:
     image: redis:latest
@@ -55,18 +39,9 @@ services:
       - n8n_redis_data:/data
     networks:
       - assistant_network
-    logging:
-      driver: gelf
-      options:
-        gelf-address: "udp://localhost:12201"
-        tag: "n8n-redis"
-    depends_on:
-      - logstash_gelf
 
-  # --- ELK Stack Services for Logging ---
   elasticsearch_log:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
-    container_name: elasticsearch_log_data
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.4
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false
@@ -82,19 +57,25 @@ services:
     restart: unless-stopped
     networks:
       - assistant_network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://127.0.0.1:9200 | grep -q 'You Know, for Search'"]
+      interval: 10s
+      timeout: 10s
+      retries: 120
 
-  logstash_gelf:
-    image: docker.elastic.co/logstash/logstash:8.13.4
-    container_name: logstash_gelf_processor
-    command: logstash -f /usr/share/logstash/config/logstash.conf
+  logstash_processor:
+    image: docker.elastic.co/logstash/logstash:8.11.4
+    container_name: logstash_processor_data
     volumes:
-      - ./logstash/config:/usr/share/logstash/config
+      - ./logstash:/usr/share/logstash/config:rw
     ports:
-      - "12201:12201/udp" # Garante que a porta 12201 UDP do Logstash esteja exposta no HOST
+      - "5044:5044"
     environment:
-      - LS_JAVA_OPTS=-Xms256m -Xmx256m
+      LS_JAVA_OPTS: "-Xms256m -Xmx256m"
+      XPACK_MONITORING_ENABLED: "false"
     depends_on:
-      - elasticsearch_log
+      elasticsearch_log:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - assistant_network
@@ -105,15 +86,30 @@ services:
         max-file: "5"
 
   kibana_viewer:
-    image: docker.elastic.co/kibana/kibana:8.13.4
+    image: docker.elastic.co/kibana/kibana:8.11.4
     container_name: kibana_log_viewer
     ports:
       - "5601:5601"
     environment:
-      - ELASTICSEARCH_HOSTS=http://elasticsearch_log:9200
-      - XPACK_SECURITY_ENABLED=false
+      - ELASTICSEARCH_HOSTS=["http://elasticsearch_log:9200"]
     depends_on:
-      - elasticsearch_log
+      elasticsearch_log:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - assistant_network
+
+  filebeat_shipper:
+    image: docker.elastic.co/beats/filebeat:8.11.4
+    container_name: filebeat_log_shipper
+    user: root
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - ./filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+    command: ["filebeat", "-e", "-strict.perms=false"]
+    depends_on:
+      - logstash_processor
     restart: unless-stopped
     networks:
       - assistant_network
@@ -126,4 +122,3 @@ volumes:
 
 networks:
   assistant_network:
-    name: personal_ai_assistant_network

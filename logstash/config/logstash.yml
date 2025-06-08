@@ -1,3 +1,0 @@
-# logstash/config/logstash.yml
-http.host: "0.0.0.0"
-path.config: /usr/share/logstash/config/logstash.conf
