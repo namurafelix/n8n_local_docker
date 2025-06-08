@@ -1,7 +1,12 @@
-filebeat.inputs:
-- type: container
-  paths:
-    - /var/lib/docker/containers/*/*.log
+filebeat.autodiscover:
+  providers:
+    # Usar o provedor Docker
+    - type: docker
+      # Procurar por contêineres em uma rede específica
+      scope: network
+      network: "n8n_local_docker_assistant_network"
+      hints.enabled: true
 
+# Apontar a saída para o nosso Logstash
 output.logstash:
   hosts: ["logstash_processor:5044"]
