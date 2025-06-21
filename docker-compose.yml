@@ -14,8 +14,11 @@ services:
       - N8N_PROTOCOL=${N8N_PROTOCOL:-http}
       - NODE_ENV=production
       - N8N_DB=mongodb
-      - N8N_DB_MONGODB_URL=mongodb://n8n_mongo_db:27017/n8n
+      - N8N_DB_MONGODB_URL=mongodb://admin:minhaSenhaForte123@n8n_mongo_db:27017/n8n?authSource=admin
       - REDIS_HOST=n8n_redis_cache
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=outraSenhaForte456
+      - REDIS_ENABLE=true
       - N8N_LOG_LEVEL=info
       - N8N_LOG_OUTPUT=stdout
     restart: unless-stopped
@@ -26,6 +29,11 @@ services:
     image: mongo:latest
     container_name: n8n_mongo_db_data
     restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=minhaSenhaForte123 # TROQUE POR UMA SENHA FORTE!
     volumes:
       - n8n_mongo_data:/data/db
     networks:
@@ -35,10 +43,22 @@ services:
     image: redis:latest
     container_name: n8n_redis_cache_data
     restart: unless-stopped
+    command: redis-server --requirepass outraSenhaForte456
     volumes:
       - n8n_redis_data:/data
     networks:
       - assistant_network
+
+  redis_gui:
+    image: redislabs/redisinsight:1.14.0
+    container_name: redis_gui_client
+    ports:
+      - "8001:8001"
+    volumes:
+      - redisinsight_data:/db
+    networks:
+      - assistant_network
+    restart: unless-stopped
 
   elasticsearch_log:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.11.4
@@ -119,6 +139,7 @@ volumes:
   n8n_mongo_data:
   n8n_redis_data:
   elasticsearch_data:
+  redisinsight_data:
 
 networks:
   assistant_network:
